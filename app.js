@@ -18,13 +18,8 @@ const todayStr = () => {
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 };
 // Escape HTML special characters to avoid injecting markup
-const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({
-  "&": "&",
-  "<": "<",
-  ">": ">",
-  '"': """,
-  "'": "'",
-}[c]));
+const ESC_MAP = { "&": "&", "<": "<", ">": ">", "\"": """, "'": "'" };
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ESC_MAP[c]);
 
 const parseAmount = (v) => {
   const n = parseFloat(String(v).replace(/\s/g, "").replace(",", "."));
