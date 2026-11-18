@@ -22,7 +22,6 @@ const ESC_MAP = {
   [String.fromCharCode(38)]: "&",   // &
   [String.fromCharCode(60)]: "<",    // <
   [String.fromCharCode(62)]: ">",    // >
-  [String.fromCharCode(34)]: """,  // "
   [String.fromCharCode(39)]: "'",   // '
 };
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ESC_MAP[c]);
