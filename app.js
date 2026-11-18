@@ -549,3 +549,94 @@ function importData(file) {
 }
 
 function changeP
+
+   /* ---------- PIN change ---------- */
+function changePinForm() {
+  simpleForm("Changer le code PIN", [
+    { id: "pOld", label: "Code actuel", type: "password" },
+    { id: "pNew", label: "Nouveau code (4 chiffres)", type: "password" },
+  ], () => {
+    // Async check is done below; return false to keep the modal open until verified
+    verifyAndChangePin();
+    return false;
+  });
+  // Numeric keyboard on iOS for the PIN fields
+  $("#pOld").setAttribute("inputmode", "numeric");
+  $("#pNew").setAttribute("inputmode", "numeric");
+  $("#pOld").setAttribute("maxlength", "4");
+  $("#pNew").setAttribute("maxlength", "4");
+}
+
+async function verifyAndChangePin() {
+  const oldPin = $("#pOld").value, newPin = $("#pNew").value;
+  if ((await sha256(oldPin)) !== state.pin) return toast("Code actuel incorrect");
+  if (!/^\d{4}$/.test(newPin)) return toast("Le nouveau code doit faire 4 chiffres");
+  state.pin = await sha256(newPin);
+  save(); closeModal(); toast("Code modifié ✅");
+}
+
+/* ---------- Event delegation (buttons rendered dynamically) ---------- */
+document.addEventListener("click", (ev) => {
+  const t = ev.target.closest("[data-act]");
+  if (!t) return;
+  const id = t.dataset.id;
+  switch (t.dataset.act) {
+    case "add-inc": incomeForm(); break;
+    case "edit-inc": incomeForm(state.incomes.find((x) => x.id === id)); break;
+    case "del-inc":
+      if (confirm("Supprimer ce revenu ?")) { state.incomes = state.incomes.filter((x) => x.id !== id); save(); render(); }
+      break;
+    case "add-fix": fixedForm(); break;
+    case "edit-fix": fixedForm(state.fixed.find((x) => x.id === id)); break;
+    case "del-fix":
+      if (confirm("Supprimer cette charge fixe ?")) { state.fixed = state.fixed.filter((x) => x.id !== id); save(); render(); }
+      break;
+    case "add-env": envelopeForm(); break;
+    case "edit-env": envelopeForm(state.envelopes.find((x) => x.id === id)); break;
+    case "del-env":
+      if (confirm("Supprimer cette enveloppe ? Ses dépenses resteront dans l'historique.")) {
+        state.envelopes = state.envelopes.filter((x) => x.id !== id); save(); render();
+      }
+      break;
+    case "edit-goal": goalForm(); break;
+    case "edit-exp": openExpenseForm(state.expenses.find((x) => x.id === id)); break;
+    case "del-exp":
+      if (confirm("Supprimer cette opération ?")) { state.expenses = state.expenses.filter((x) => x.id !== id); save(); render(); }
+      break;
+    case "export": exportData(); break;
+    case "import": $("#importFile").click(); break;
+    case "change-pin": changePinForm(); break;
+    case "lock": showLock(); break;
+    case "reset":
+      if (confirm("Tout effacer définitivement ? Pense à exporter avant.")) {
+        localStorage.removeItem(KEY); location.reload();
+      }
+      break;
+  }
+});
+
+// File input for import is re-created on each render, so listen on the document
+document.addEventListener("change", (ev) => {
+  if (ev.target.id === "importFile" && ev.target.files[0]) importData(ev.target.files[0]);
+});
+
+/* ---------- Navigation ---------- */
+document.querySelectorAll(".tabs button").forEach((b) =>
+  b.addEventListener("click", () => { currentTab = b.dataset.tab; render(); window.scrollTo(0, 0); }));
+$("#fab").addEventListener("click", () => openExpenseForm());
+$("#prevMonth").addEventListener("click", () => { viewMonth.setMonth(viewMonth.getMonth() - 1); render(); });
+$("#nextMonth").addEventListener("click", () => { viewMonth.setMonth(viewMonth.getMonth() + 1); render(); });
+
+/* ---------- Startup ---------- */
+(async function init() {
+  buildKeypad();
+  if (!load()) {
+    // First launch: create default data with the initial PIN
+    state = defaultState(await sha256("1997"));
+    save();
+  }
+  showLock();
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js").catch(() => { /* offline mode simply unavailable */ });
+  }
+})();
