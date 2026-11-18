@@ -18,7 +18,13 @@ const todayStr = () => {
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 };
 // Escape HTML special characters to avoid injecting markup
-const ESC_MAP = { "&": "&", "<": "<", ">": ">", "\"": """, "'": "'" };
+const ESC_MAP = {
+  [String.fromCharCode(38)]: "&",   // &
+  [String.fromCharCode(60)]: "<",    // <
+  [String.fromCharCode(62)]: ">",    // >
+  [String.fromCharCode(34)]: """,  // "
+  [String.fromCharCode(39)]: "'",   // '
+};
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ESC_MAP[c]);
 
 const parseAmount = (v) => {
