@@ -19,7 +19,11 @@ const todayStr = () => {
 };
 // Escape HTML special characters to avoid injecting markup
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({
-  "&": "&", "<": "<", ">": ">", '"': """, "'": "'"
+  "&": "&",
+  "<": "<",
+  ">": ">",
+  '"': """,
+  "'": "'",
 }[c]));
 const parseAmount = (v) => {
   const n = parseFloat(String(v).replace(/\s/g, "").replace(",", "."));
