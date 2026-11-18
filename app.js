@@ -25,6 +25,7 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({
   '"': """,
   "'": "'",
 }[c]));
+
 const parseAmount = (v) => {
   const n = parseFloat(String(v).replace(/\s/g, "").replace(",", "."));
   return isNaN(n) ? 0 : Math.round(n * 100) / 100;
