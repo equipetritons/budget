@@ -2,18 +2,9 @@
 
 /* =====================================================================
    Budget PWA - all data lives in localStorage on the device.
-   Data model (state):
-     pin:        SHA-256 hash of the PIN
-     incomes:    [{id, name, amount, type:"fixed"|"oneoff", month:"YYYY-MM"|null}]
-     fixed:      [{id, name, amount}]            recurring monthly charges
-     envelopes:  [{id, name, budget, keywords:[]}]  variable "compensating" envelopes
-     savings:    {goal}                          monthly savings target
-     expenses:   [{id, date:"YYYY-MM-DD", amount, envId, note, kind:"env"|"saving"}]
-     learned:    {keyword: envId}                OCR category learning
    ===================================================================== */
 
 const KEY = "budget_pwa_v1";
-const DEFAULT_PIN_HASH_PLACEHOLDER = null; // computed at first launch
 
 /* ---------- Helpers ---------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -26,7 +17,10 @@ const todayStr = () => {
   const d = new Date();
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 };
-const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&", "<": "<", ">": ">", '"': """, "'": "'" }[c]));
+// Escape HTML special characters to avoid injecting markup
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({
+  "&": "&", "<": "<", ">": ">", '"': """, "'": "'"
+}[c]));
 const parseAmount = (v) => {
   const n = parseFloat(String(v).replace(/\s/g, "").replace(",", "."));
   return isNaN(n) ? 0 : Math.round(n * 100) / 100;
@@ -51,10 +45,10 @@ function defaultState(pinHash) {
       { id: uid(), name: "Assurance maladie", amount: 400 },
     ],
     envelopes: [
-      { id: uid(), name: "Courses", budget: 600, keywords: ["migros", "coop", "denner", "aldi", "lidl", "volg", "manor food"] },
-      { id: uid(), name: "Transport", budget: 120, keywords: ["cff", "sbb", "tpg", "tl ", "essence", "shell", "bp ", "avia", "parking"] },
+      { id: uid(), name: "Courses", budget: 600, keywords: ["migros", "coop", "denner", "aldi", "lidl", "volg"] },
+      { id: uid(), name: "Transport", budget: 120, keywords: ["cff", "sbb", "tpg", "essence", "shell", "avia", "parking"] },
       { id: uid(), name: "Coiffeur", budget: 60, keywords: ["coiffeur", "coiffure", "barber"] },
-      { id: uid(), name: "Loisirs", budget: 200, keywords: ["cinema", "restaurant", "bar ", "netflix", "spotify"] },
+      { id: uid(), name: "Loisirs", budget: 200, keywords: ["cinema", "restaurant", "netflix", "spotify"] },
     ],
     savings: { goal: 500 },
     expenses: [],
@@ -67,7 +61,7 @@ function load() {
   try {
     const raw = localStorage.getItem(KEY);
     if (raw) { state = JSON.parse(raw); return true; }
-  } catch (e) { /* corrupted data: fall through */ }
+  } catch (e) { /* corrupted data: fall through to defaults */ }
   return false;
 }
 
@@ -90,11 +84,8 @@ function compute(mk) {
   const savedActual = exps.filter((e) => e.kind === "saving").reduce((s, e) => s + e.amount, 0);
   const goal = state.savings.goal;
 
-  // Money available for variable envelopes after fixed charges and savings goal
   const planned = incomeTotal - fixedTotal - goal;
-  // Real remaining = what is left to spend across all envelopes (compensation)
   const remaining = budgetTotal - spentTotal;
-  // Total variable budget vs. what is really available
   const unallocated = planned - budgetTotal;
 
   const over = envs.filter((e) => e.left < 0);
@@ -107,7 +98,6 @@ function compute(mk) {
 }
 
 function savingsCumulative() {
-  // Sum of all "saving" entries ever recorded (the real money put aside)
   return state.expenses.filter((e) => e.kind === "saving").reduce((s, e) => s + e.amount, 0);
 }
 
@@ -116,15 +106,18 @@ function toast(msg) {
   const t = $("#toast"); t.textContent = msg; t.classList.remove("hidden");
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add("hidden"), 2200);
 }
-function openModal(html) { const m = $("#modal"); m.innerHTML = '<div class="sheet">' + html + "</div>"; m.classList.remove("hidden"); }
+function openModal(html) {
+  const m = $("#modal");
+  m.innerHTML = '<div class="sheet">' + html + "</div>";
+  m.classList.remove("hidden");
+}
 function closeModal() { $("#modal").classList.add("hidden"); $("#modal").innerHTML = ""; }
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 
 /* ---------- PIN lock ---------- */
 let pinBuf = "";
-let pinMode = "enter"; // "enter" | "setnew"
 function buildKeypad() {
-  const kp =  $ ("#keypad"); kp.innerHTML = "";
+  const kp = $("#keypad"); kp.innerHTML = "";
   const keys = ["1","2","3","4","5","6","7","8","9","","0","⌫"];
   keys.forEach((k) => {
     const b = document.createElement("button");
@@ -135,9 +128,10 @@ function buildKeypad() {
   });
 }
 function renderDots() {
-  [... $ ("#dots").children].forEach((d, i) => d.classList.toggle("on", i < pinBuf.length));
+  [...$("#dots").children].forEach((d, i) => d.classList.toggle("on", i < pinBuf.length));
 }
 async function pressKey(k) {
+  if (!k) return;
   if (k === "⌫") pinBuf = pinBuf.slice(0, -1);
   else if (pinBuf.length < 4) pinBuf += k;
   renderDots();
@@ -174,7 +168,7 @@ function render() {
   else if (currentTab === "setup") v.innerHTML = renderSetup(mk);
   else v.innerHTML = renderSettings();
   document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === currentTab));
-   $ ("#fab").classList.toggle("hidden", currentTab === "settings");
+  $("#fab").classList.toggle("hidden", currentTab === "settings");
 }
 
 function renderHome(mk) {
@@ -182,10 +176,10 @@ function renderHome(mk) {
   const cumul = savingsCumulative();
   const monthName = viewMonth.toLocaleDateString("fr-CH", { month: "long" });
 
-  // Alert card: over-budget envelopes + where to take money from
+  // Alert card: over-budget envelopes and where to take money from
   let alert = "";
   if (c.over.length) {
-    const overList = c.over.map((e) => `<b> $ {esc(e.name)}</b> (−${fmt(-e.left)})`).join(", ");
+    const overList = c.over.map((e) => `<b>${esc(e.name)}</b> (−${fmt(-e.left)})`).join(", ");
     const underList = c.under.length
       ? c.under.map((e) => `${esc(e.name)} : <b>${fmt(e.left)}</b>`).join("<br>")
       : "Aucune enveloppe n'a de marge.";
@@ -370,16 +364,15 @@ function openExpenseForm(existing, prefill) {
     $("#scanFile").onchange = (ev) => scanImage(ev.target.files[0]);
     setTimeout(() => $("#fAmount").focus(), 100);
   }
-   $ ("#fSave").onclick = () => {
-    const amount = parseAmount( $ ("#fAmount").value);
-    const kind =  $ ("#fKind").value;
+  $("#fSave").onclick = () => {
+    const amount = parseAmount($("#fAmount").value);
+    const kind = $("#fKind").value;
     if (amount <= 0) return toast("Montant invalide");
-    if (kind === "env" && ! $ ("#fEnv").value) return toast("Crée d'abord une enveloppe");
+    if (kind === "env" && !$("#fEnv").value) return toast("Crée d'abord une enveloppe");
     const rec = {
       id: e.id || uid(), date: $("#fDate").value || todayStr(), amount, kind,
-      envId: kind === "env" ? $("#fEnv").value : null, note:  $ ("#fNote").value.trim(),
+      envId: kind === "env" ? $("#fEnv").value : null, note: $("#fNote").value.trim(),
     };
-    // Learn: remember keywords from the note/scan for next time
     if (kind === "env" && rec.note) learnFromNote(rec.note, rec.envId);
     if (existing) state.expenses = state.expenses.map((x) => (x.id === rec.id ? rec : x));
     else state.expenses.push(rec);
@@ -388,17 +381,17 @@ function openExpenseForm(existing, prefill) {
 }
 
 function learnFromNote(note, envId) {
-  // Store the first meaningful word of the note as a learned keyword
+  // Remember the first meaningful word of the note for future auto-categorisation
   const word = note.toLowerCase().split(/[^a-zà-ÿ0-9]+/).find((w) => w.length >= 4);
   if (word) state.learned[word] = envId;
 }
 
-function simpleForm(title, fields, onSave, onDelete) {
+function simpleForm(title, fields, onSave) {
   const html = fields.map((f) => `
-    <label> $ {f.label}</label>
+    <label>${f.label}</label>
     ${f.type === "select"
       ? `<select id="${f.id}">${f.options}</select>`
-      : `<input id="${f.id}" type="${f.type || "text"}" ${f.type === "text" && f.numeric ? 'inputmode="decimal"' : ""} value="${esc(f.value ?? "")}" placeholder="${esc(f.placeholder || "")}">`}
+      : `<input id="${f.id}" type="${f.type || "text"}" ${(f.type || "text") === "text" && f.numeric ? 'inputmode="decimal"' : ""} value="${esc(f.value ?? "")}" placeholder="${esc(f.placeholder || "")}">`}
   `).join("");
   openModal(`<h2>${title}</h2>${html}
     <div class="btns"><button class="btn sec" id="sCancel">Annuler</button><button class="btn" id="sSave">Enregistrer</button></div>`);
@@ -416,24 +409,26 @@ function incomeForm(inc) {
        <option value="oneoff" ${i.type === "oneoff" ? "selected" : ""}>Ponctuel (un mois)</option>` },
     { id: "iMonth", label: "Mois (si ponctuel)", type: "month", value: i.month || monthKey(viewMonth) },
   ], () => {
-    const name =  $ ("#iName").value.trim(), amount = parseAmount( $ ("#iAmt").value), type = $("#iType").value;
+    const name = $("#iName").value.trim(), amount = parseAmount($("#iAmt").value), type = $("#iType").value;
     if (!name || amount <= 0) { toast("Nom et montant requis"); return false; }
     const rec = { id: i.id || uid(), name, amount, type, month: type === "oneoff" ? $("#iMonth").value : null };
     if (inc) state.incomes = state.incomes.map((x) => (x.id === rec.id ? rec : x)); else state.incomes.push(rec);
   });
 }
+
 function fixedForm(fx) {
   const f = fx || { id: null, name: "", amount: "" };
   simpleForm(fx ? "Modifier la charge" : "Nouvelle charge fixe", [
     { id: "fName", label: "Nom", value: f.name, placeholder: "Loyer, assurance…" },
     { id: "fAmt", label: "Montant mensuel (CHF)", value: f.amount, numeric: true },
   ], () => {
-    const name =  $ ("#fName").value.trim(), amount = parseAmount( $ ("#fAmt").value);
+    const name = $("#fName").value.trim(), amount = parseAmount($("#fAmt").value);
     if (!name || amount <= 0) { toast("Nom et montant requis"); return false; }
     const rec = { id: f.id || uid(), name, amount };
     if (fx) state.fixed = state.fixed.map((x) => (x.id === rec.id ? rec : x)); else state.fixed.push(rec);
   });
 }
+
 function envelopeForm(env) {
   const e = env || { id: null, name: "", budget: "", keywords: [] };
   simpleForm(env ? "Modifier l'enveloppe" : "Nouvelle enveloppe", [
@@ -441,18 +436,19 @@ function envelopeForm(env) {
     { id: "eBud", label: "Budget mensuel (CHF)", value: e.budget, numeric: true },
     { id: "eKw", label: "Mots-clés pour le scan (séparés par des virgules)", value: e.keywords.join(", "), placeholder: "migros, coop, denner" },
   ], () => {
-    const name =  $ ("#eName").value.trim(), budget = parseAmount( $ ("#eBud").value);
+    const name = $("#eName").value.trim(), budget = parseAmount($("#eBud").value);
     if (!name || budget < 0) { toast("Nom et budget requis"); return false; }
-    const keywords =  $ ("#eKw").value.split(",").map((k) => k.trim().toLowerCase()).filter(Boolean);
+    const keywords = $("#eKw").value.split(",").map((k) => k.trim().toLowerCase()).filter(Boolean);
     const rec = { id: e.id || uid(), name, budget, keywords };
     if (env) state.envelopes = state.envelopes.map((x) => (x.id === rec.id ? rec : x)); else state.envelopes.push(rec);
   });
 }
+
 function goalForm() {
   simpleForm("Objectif d'épargne mensuel", [
     { id: "gAmt", label: "Montant (CHF)", value: state.savings.goal, numeric: true },
   ], () => {
-    const v = parseAmount( $ ("#gAmt").value);
+    const v = parseAmount($("#gAmt").value);
     if (v < 0) return false;
     state.savings.goal = v;
   });
@@ -466,7 +462,8 @@ function loadTesseract() {
   tesseractLoading = new Promise((res, rej) => {
     const s = document.createElement("script");
     s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
-    s.onload = res; s.onerror = () => rej(new Error("load"));
+    s.onload = res;
+    s.onerror = () => { tesseractLoading = null; rej(new Error("load")); };
     document.head.appendChild(s);
   });
   return tesseractLoading;
@@ -486,9 +483,9 @@ async function scanImage(file) {
     const amount = extractTotal(text);
     const envId = guessEnvelope(text);
     if (amount) $("#fAmount").value = amount.toFixed(2);
-    if (envId)  $ ("#fEnv").value = envId;
+    if (envId) $("#fEnv").value = envId;
     const firstLine = text.split("\n").map((l) => l.trim()).find((l) => l.length > 3) || "";
-    if (firstLine && ! $ ("#fNote").value) $("#fNote").value = firstLine.slice(0, 40);
+    if (firstLine && !$("#fNote").value) $("#fNote").value = firstLine.slice(0, 40);
     status.textContent = amount
       ? `Détecté : ${fmt(amount)}${envId ? " → " + state.envelopes.find((x) => x.id === envId).name : " (catégorie à choisir)"}. Vérifie avant d'enregistrer.`
       : "Montant non détecté. Saisis-le à la main.";
@@ -498,7 +495,7 @@ async function scanImage(file) {
 }
 
 function extractTotal(text) {
-  // 1) Look for lines mentioning a total, take the largest amount on them
+  // 1) Prefer amounts on lines that mention a total
   const lines = text.split("\n");
   const re = /(\d{1,6}[.,]\d{2})(?!\d)/g;
   let best = 0;
@@ -515,7 +512,7 @@ function extractTotal(text) {
 
 function guessEnvelope(text) {
   const t = text.toLowerCase();
-  // Learned words first (they come from your past corrections)
+  // Learned words first (they come from past corrections)
   for (const [word, envId] of Object.entries(state.learned)) {
     if (t.includes(word) && state.envelopes.some((e) => e.id === envId)) return envId;
   }
@@ -535,6 +532,7 @@ function exportData() {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
+
 function importData(file) {
   const r = new FileReader();
   r.onload = () => {
@@ -548,23 +546,20 @@ function importData(file) {
   r.readAsText(file);
 }
 
-function changeP
-
-   /* ---------- PIN change ---------- */
+/* ---------- PIN change ---------- */
 function changePinForm() {
   simpleForm("Changer le code PIN", [
     { id: "pOld", label: "Code actuel", type: "password" },
     { id: "pNew", label: "Nouveau code (4 chiffres)", type: "password" },
   ], () => {
-    // Async check is done below; return false to keep the modal open until verified
+    // The check is asynchronous: return false to keep the modal open until verified
     verifyAndChangePin();
     return false;
   });
-  // Numeric keyboard on iOS for the PIN fields
-  $("#pOld").setAttribute("inputmode", "numeric");
-  $("#pNew").setAttribute("inputmode", "numeric");
-  $("#pOld").setAttribute("maxlength", "4");
-  $("#pNew").setAttribute("maxlength", "4");
+  ["pOld", "pNew"].forEach((id) => {
+    $("#" + id).setAttribute("inputmode", "numeric");
+    $("#" + id).setAttribute("maxlength", "4");
+  });
 }
 
 async function verifyAndChangePin() {
@@ -615,7 +610,7 @@ document.addEventListener("click", (ev) => {
   }
 });
 
-// File input for import is re-created on each render, so listen on the document
+// The import file input is re-created on each render, so listen on the document
 document.addEventListener("change", (ev) => {
   if (ev.target.id === "importFile" && ev.target.files[0]) importData(ev.target.files[0]);
 });
