@@ -1,296 +1,177 @@
 "use strict";
 
-(() => {
-  const STORAGE_KEY = "budget_simple_v1";
+/* =====================================================================
+   Budget - single-file app. Data is stored in the browser (localStorage).
+   The whole UI is built by this script, so it does not depend on
+   any other HTML element.
+   ===================================================================== */
 
-  const initialState = {
-    month: new Date().toISOString().slice(0, 7),
-    incomes: [],
-    envelopes: [],
-    expenses: []
-  };
+const STORAGE_KEY = "budget_v2";
+const DEFAULT_PIN = "1234";
 
-  let state = loadState();
-  let message = "";
+// Load saved data, or create a starter structure on first launch.
+function loadData() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {
+    console.error("Could not read saved data", e);
+  }
+  return { pin: DEFAULT_PIN, envelopes: [], expenses: [] };
+}
 
-  function loadState() {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (!saved) return structuredClone(initialState);
+function saveData() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
 
-      const data = JSON.parse(saved);
-      return {
-        ...initialState,
-        ...data,
-        incomes: Array.isArray(data.incomes) ? data.incomes : [],
-        envelopes: Array.isArray(data.envelopes) ? data.envelopes : [],
-        expenses: Array.isArray(data.expenses) ? data.expenses : []
-      };
-    } catch (error) {
-      return { ...initialState, incomes: [], envelopes: [], expenses: [] };
+let data = loadData();
+let unlocked = false;
+let pinBuffer = "";
+
+const root = document.getElementById("root");
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&", "<": "<", ">": ">", '"': """, "'": "'" }[c]));
+}
+
+function formatMoney(value) {
+  return Number(value).toFixed(2) + " CHF";
+}
+
+/* ---------- PIN screen ---------- */
+function renderLock(message = "Entre ton code") {
+  const dots = [0, 1, 2, 3].map((i) =>
+    `<span class="dot ${i < pinBuffer.length ? "filled" : ""}"></span>`).join("");
+
+  const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"]
+    .map((k) => k === ""
+      ? `<span></span>`
+      : `<button class="key" data-key="${k}">${k}</button>`).join("");
+
+  root.innerHTML = `
+    <div class="lock">
+      <h1>🔒 Budget</h1>
+      <p>${escapeHtml(message)}</p>
+      <div class="dots">${dots}</div>
+      <div class="keypad">${keys}</div>
+    </div>`;
+}
+
+function handleKey(key) {
+  if (key === "⌫") {
+    pinBuffer = pinBuffer.slice(0, -1);
+    return renderLock();
+  }
+  if (pinBuffer.length >= 4) return;
+  pinBuffer += key;
+  renderLock();
+
+  if (pinBuffer.length === 4) {
+    if (pinBuffer === data.pin) {
+      unlocked = true;
+      pinBuffer = "";
+      renderApp();
+    } else {
+      pinBuffer = "";
+      setTimeout(() => renderLock("Code incorrect, réessaie"), 300);
     }
   }
+}
 
-  function saveState() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch (error) {
-      alert("Impossible d'enregistrer les données sur cet appareil.");
-    }
-  }
+/* ---------- Main screen ---------- */
+function renderApp() {
+  const total = data.expenses.reduce((sum, e) => sum + Number(e.amount), 0);
 
-  function escapeHtml(value) {
-    return String(value).replace(/[&<>"']/g, (character) => ({
-      "&": "&",
-      "<": "<",
-      ">": ">",
-      '"': """,
-      "'": "&#039;"
-    }[character]));
-  }
+  const envelopeRows = data.envelopes.length
+    ? data.envelopes.map((env) => {
+        const spent = data.expenses
+          .filter((e) => e.envelopeId === env.id)
+          .reduce((sum, e) => sum + Number(e.amount), 0);
+        return `
+          <div class="row">
+            <span>${escapeHtml(env.name)}</span>
+            <span>${formatMoney(spent)} / ${formatMoney(env.budget)}</span>
+          </div>`;
+      }).join("")
+    : `<p class="muted">Aucune enveloppe. Ajoute-en une ci-dessous.</p>`;
 
-  function money(value) {
-    return new Intl.NumberFormat("fr-CH", {
-      style: "currency",
-      currency: "CHF"
-    }).format(Number(value) || 0);
-  }
+  const envelopeOptions = data.envelopes
+    .map((env) => `<option value="${env.id}">${escapeHtml(env.name)}</option>`).join("");
 
-  function monthName(month) {
-    const [year, number] = month.split("-").map(Number);
-    return new Intl.DateTimeFormat("fr-CH", {
-      month: "long",
-      year: "numeric"
-    }).format(new Date(year, number - 1, 1));
-  }
+  root.innerHTML = `
+    <div class="app">
+      <header><h1>Budget</h1><p>Total dépensé : <b>${formatMoney(total)}</b></p></header>
 
-  function monthExpenses() {
-    return state.expenses.filter((item) => item.date.slice(0, 7) === state.month);
-  }
-
-  function totalIncome() {
-    return state.incomes.reduce((sum, item) => sum + item.amount, 0);
-  }
-
-  function totalSpent() {
-    return monthExpenses().reduce((sum, item) => sum + item.amount, 0);
-  }
-
-  function envelopeSpent(envelopeId) {
-    return monthExpenses()
-      .filter((item) => item.envelopeId === envelopeId)
-      .reduce((sum, item) => sum + item.amount, 0);
-  }
-
-  function showMessage(text) {
-    message = text;
-    render();
-    window.setTimeout(() => {
-      if (message === text) {
-        message = "";
-        render();
-      }
-    }, 2500);
-  }
-
-  function render() {
-    const app = document.querySelector("#app");
-    if (!app) {
-      document.body.innerHTML =
-        "<p style='font:16px sans-serif;padding:20px'>Erreur : l'élément #app manque dans index.html.</p>";
-      return;
-    }
-
-    const expenses = monthExpenses();
-    const remaining = totalIncome() - totalSpent();
-
-    app.classList.remove("hidden");
-    app.innerHTML = `
-      <main style="max-width:700px;margin:auto;padding:20px;font:16px Arial,sans-serif;color:#172033">
-        <h1 style="margin-bottom:8px">Mon budget</h1>
-
-        <label for="month" style="display:block;margin:16px 0 6px">Mois affiché</label>
-        <input id="month" type="month" value="${escapeHtml(state.month)}"
-          style="font-size:16px;padding:10px">
-
-        <section style="margin:20px 0;padding:16px;border-radius:12px;background:#eef2ff">
-          <p>Revenus enregistrés : <strong>${money(totalIncome())}</strong></p>
-          <p>Dépenses du mois : <strong>${money(totalSpent())}</strong></p>
-          <p>Reste estimé : <strong>${money(remaining)}</strong></p>
-        </section>
-
-        <h2>Ajouter une dépense</h2>
-        <form id="expense-form" style="display:grid;gap:10px">
-          <label>Date <input name="date" type="date" required value="${new Date().toISOString().slice(0, 10)}"></label>
-          <label>Montant (CHF) <input name="amount" type="number" min="0.01" step="0.01" required></label>
-          <label>Enveloppe
-            <select name="envelopeId">
-              <option value="">Sans enveloppe</option>
-              ${state.envelopes.map((item) =>
-                `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`
-              ).join("")}
-            </select>
-          </label>
-          <label>Note <input name="note" type="text" maxlength="100"></label>
-          <button type="submit" style="padding:12px;font-size:16px">Enregistrer la dépense</button>
+      <section class="card">
+        <h2>Enveloppes</h2>
+        ${envelopeRows}
+        <form id="envForm" class="form">
+          <input id="envName" placeholder="Nom (ex : Courses)" required>
+          <input id="envBudget" type="number" step="0.01" min="0" placeholder="Budget (CHF)" required>
+          <button type="submit">Ajouter l'enveloppe</button>
         </form>
+      </section>
 
-        <h2 style="margin-top:28px">Enveloppes</h2>
-        <form id="envelope-form" style="display:grid;gap:10px">
-          <label>Nom <input name="name" type="text" maxlength="50" required></label>
-          <label>Budget mensuel (CHF) <input name="budget" type="number" min="0" step="0.01" required></label>
-          <button type="submit" style="padding:12px;font-size:16px">Ajouter l'enveloppe</button>
+      <section class="card">
+        <h2>Nouvelle dépense</h2>
+        <form id="expForm" class="form">
+          <input id="expAmount" type="number" step="0.01" min="0" placeholder="Montant (CHF)" required>
+          <select id="expEnv">
+            ${envelopeOptions || '<option value="">(crée d\'abord une enveloppe)</option>'}
+          </select>
+          <input id="expNote" placeholder="Note (optionnel)">
+          <button type="submit" ${data.envelopes.length ? "" : "disabled"}>Enregistrer</button>
         </form>
-        <ul>
-          ${state.envelopes.map((item) => {
-            const spent = envelopeSpent(item.id);
-            return `<li style="margin:12px 0">
-              <strong>${escapeHtml(item.name)}</strong> : ${money(spent)} dépensés sur ${money(item.budget)}
-              <button type="button" data-delete-envelope="${escapeHtml(item.id)}">Supprimer</button>
-            </li>`;
-          }).join("") || "<li>Aucune enveloppe pour le moment.</li>"}
-        </ul>
+      </section>
 
-        <h2 style="margin-top:28px">Revenus</h2>
-        <form id="income-form" style="display:grid;gap:10px">
-          <label>Nom <input name="name" type="text" maxlength="50" required></label>
-          <label>Montant (CHF) <input name="amount" type="number" min="0.01" step="0.01" required></label>
-          <button type="submit" style="padding:12px;font-size:16px">Ajouter le revenu</button>
-        </form>
-        <ul>
-          ${state.incomes.map((item) =>
-            `<li style="margin:12px 0">${escapeHtml(item.name)} : ${money(item.amount)}
-              <button type="button" data-delete-income="${escapeHtml(item.id)}">Supprimer</button>
-            </li>`
-          ).join("") || "<li>Aucun revenu enregistré.</li>"}
-        </ul>
+      <section class="card">
+        <h2>Historique</h2>
+        ${data.expenses.slice().reverse().map((e) => `
+          <div class="row">
+            <span>${escapeHtml(e.note || "Dépense")}</span>
+            <span>${formatMoney(e.amount)}</span>
+          </div>`).join("") || `<p class="muted">Aucune dépense.</p>`}
+      </section>
 
-        <h2 style="margin-top:28px">Dépenses de ${escapeHtml(monthName(state.month))}</h2>
-        <ul>
-          ${expenses.map((item) => {
-            const envelope = state.envelopes.find((entry) => entry.id === item.envelopeId);
-            return `<li style="margin:12px 0">
-              ${escapeHtml(item.date)} — ${money(item.amount)}
-              ${envelope ? ` — ${escapeHtml(envelope.name)}` : ""}
-              ${item.note ? ` — ${escapeHtml(item.note)}` : ""}
-              <button type="button" data-delete-expense="${escapeHtml(item.id)}">Supprimer</button>
-            </li>`;
-          }).join("") || "<li>Aucune dépense ce mois-ci.</li>"}
-        </ul>
+      <button id="lockBtn" class="secondary">🔒 Verrouiller</button>
+    </div>`;
 
-        ${message ? `<p role="status" style="padding:10px;background:#dcfce7">${escapeHtml(message)}</p>` : ""}
-        <p style="margin-top:24px;font-size:13px;color:#555">
-          Les données sont enregistrées dans le navigateur de cet appareil. Elles ne sont pas synchronisées avec ton PC.
-        </p>
-      </main>
-    `;
-
-    document.querySelector("#month").addEventListener("change", (event) => {
-      if (event.target.value) {
-        state.month = event.target.value;
-        saveState();
-        render();
-      }
+  document.getElementById("envForm").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    data.envelopes.push({
+      id: Date.now().toString(),
+      name: document.getElementById("envName").value.trim(),
+      budget: Number(document.getElementById("envBudget").value),
     });
+    saveData();
+    renderApp();
+  });
 
-    document.querySelector("#expense-form").addEventListener("submit", (event) => {
-      event.preventDefault();
-      const form = new FormData(event.currentTarget);
-      const amount = Number(form.get("amount"));
-      const date = String(form.get("date"));
-
-      if (!Number.isFinite(amount) || amount <= 0 || !date) {
-        showMessage("Vérifie le montant et la date.");
-        return;
-      }
-
-      state.expenses.push({
-        id: crypto.randomUUID(),
-        date,
-        amount,
-        envelopeId: String(form.get("envelopeId") || ""),
-        note: String(form.get("note") || "").trim()
-      });
-
-      saveState();
-      showMessage("Dépense enregistrée.");
+  document.getElementById("expForm").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    data.expenses.push({
+      id: Date.now().toString(),
+      amount: Number(document.getElementById("expAmount").value),
+      envelopeId: document.getElementById("expEnv").value,
+      note: document.getElementById("expNote").value.trim(),
     });
+    saveData();
+    renderApp();
+  });
 
-    document.querySelector("#envelope-form").addEventListener("submit", (event) => {
-      event.preventDefault();
-      const form = new FormData(event.currentTarget);
-      const name = String(form.get("name") || "").trim();
-      const budget = Number(form.get("budget"));
+  document.getElementById("lockBtn").addEventListener("click", () => {
+    unlocked = false;
+    pinBuffer = "";
+    renderLock();
+  });
+}
 
-      if (!name || !Number.isFinite(budget) || budget < 0) {
-        showMessage("Vérifie le nom et le budget.");
-        return;
-      }
+/* ---------- Events ---------- */
+root.addEventListener("click", (ev) => {
+  const key = ev.target.closest("[data-key]");
+  if (key && !unlocked) handleKey(key.dataset.key);
+});
 
-      state.envelopes.push({ id: crypto.randomUUID(), name, budget });
-      saveState();
-      showMessage("Enveloppe ajoutée.");
-    });
-
-    document.querySelector("#income-form").addEventListener("submit", (event) => {
-      event.preventDefault();
-      const form = new FormData(event.currentTarget);
-      const name = String(form.get("name") || "").trim();
-      const amount = Number(form.get("amount"));
-
-      if (!name || !Number.isFinite(amount) || amount <= 0) {
-        showMessage("Vérifie le nom et le montant.");
-        return;
-      }
-
-      state.incomes.push({ id: crypto.randomUUID(), name, amount });
-      saveState();
-      showMessage("Revenu ajouté.");
-    });
-
-    document.querySelectorAll("[data-delete-envelope]").forEach((button) => {
-      button.addEventListener("click", () => {
-        state.envelopes = state.envelopes.filter(
-          (item) => item.id !== button.dataset.deleteEnvelope
-        );
-        saveState();
-        render();
-      });
-    });
-
-    document.querySelectorAll("[data-delete-income]").forEach((button) => {
-      button.addEventListener("click", () => {
-        state.incomes = state.incomes.filter(
-          (item) => item.id !== button.dataset.deleteIncome
-        );
-        saveState();
-        render();
-      });
-    });
-
-    document.querySelectorAll("[data-delete-expense]").forEach((button) => {
-      button.addEventListener("click", () => {
-        state.expenses = state.expenses.filter(
-          (item) => item.id !== button.dataset.deleteExpense
-        );
-        saveState();
-        render();
-      });
-    });
-  }
-
-  function start() {
-    if (!document.querySelector("#app")) {
-      document.body.innerHTML =
-        "<p style='font:16px sans-serif;padding:20px'>Erreur : index.html ne contient pas de bloc avec id=\"app\".</p>";
-      return;
-    }
-    render();
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", start);
-  } else {
-    start();
-  }
-})();
+/* ---------- Start ---------- */
+renderLock();
