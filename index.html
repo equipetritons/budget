@@ -3,46 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0f172a">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="Budget">
-  <link rel="manifest" href="manifest.json">
-  <link rel="apple-touch-icon" href="icon-180.png">
-  <link rel="stylesheet" href="style.css">
   <title>Budget</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="lock" class="lock hidden">
-    <div class="lock-box">
-      <h1>🔒 Budget</h1>
-      <p id="lockMsg">Entre ton code</p>
-      <div id="dots" class="dots"><span></span><span></span><span></span><span></span></div>
-      <div id="keypad" class="keypad"></div>
-    </div>
-  </div>
-
-  <div id="app" class="hidden">
-    <header class="top">
-      <button id="prevMonth" class="icon-btn" aria-label="Mois précédent">‹</button>
-      <div id="monthLabel" class="month"></div>
-      <button id="nextMonth" class="icon-btn" aria-label="Mois suivant">›</button>
-    </header>
-
-    <main id="view"></main>
-
-    <button id="fab" class="fab" aria-label="Ajouter une dépense">＋</button>
-
-    <nav class="tabs">
-      <button data-tab="home" class="active"><span>🏠</span>Accueil</button>
-      <button data-tab="history"><span>🧾</span>Historique</button>
-      <button data-tab="setup"><span>⚙️</span>Budget</button>
-      <button data-tab="settings"><span>🛠️</span>Réglages</button>
-    </nav>
-  </div>
-
-  <div id="modal" class="modal hidden"></div>
-  <div id="toast" class="toast hidden"></div>
-
+  <div id="root"></div>
   <script src="app.js"></script>
 </body>
 </html>
