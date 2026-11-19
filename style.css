@@ -1,19 +1,86 @@
-* { box-sizing: border-box; }
-body { margin: 0; font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
-.lock { display: flex; flex-direction: column; align-items: center; padding: 40px 20px; gap: 16px; }
-.dots { display: flex; gap: 14px; }
-.dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #94a3b8; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior-y: none;
+}
+
+body { min-height: 100vh; min-height: 100dvh; }
+
+/* Lock screen */
+.lock {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: calc(20px + env(safe-area-inset-top)) 20px calc(20px + env(safe-area-inset-bottom));
+}
+.lock h1 { margin: 0; font-size: 28px; }
+.lock p { margin: 0; color: #94a3b8; }
+.dots { display: flex; gap: 16px; height: 18px; }
+.dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid #94a3b8; }
 .dot.filled { background: #38bdf8; border-color: #38bdf8; }
-.keypad { display: grid; grid-template-columns: repeat(3, 72px); gap: 12px; }
-.key { height: 72px; border-radius: 50%; border: none; background: #1e293b; color: #fff; font-size: 24px; }
-.app { max-width: 480px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
-.card { background: #1e293b; border-radius: 14px; padding: 14px; }
+.keypad { display: grid; grid-template-columns: repeat(3, 76px); gap: 14px; margin-top: 8px; }
+.key {
+  width: 76px; height: 76px; border-radius: 50%;
+  border: none; background: #1e293b; color: #fff;
+  font-size: 26px; padding: 0;
+  touch-action: manipulation;
+}
+.key:active { background: #334155; }
+.key-empty { width: 76px; height: 76px; }
+
+/* App layout */
+.app {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: calc(16px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.app header h1 { margin: 0 0 4px; font-size: 28px; }
+.app header p { margin: 0; color: #94a3b8; }
+
+.card { background: #1e293b; border-radius: 16px; padding: 16px; }
 .card h2 { margin: 0 0 10px; font-size: 18px; }
-.row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155; }
-.form { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
-input, select, button { font-size: 16px; padding: 10px; border-radius: 10px; border: none; }
-input, select { background: #0f172a; color: #e2e8f0; }
-button { background: #38bdf8; color: #0f172a; font-weight: 600; }
-button:disabled { opacity: 0.4; }
-button.secondary { background: #334155; color: #e2e8f0; }
-.muted { color: #94a3b8; font-size: 14px; }
+
+.row {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 10px; padding: 10px 0; border-bottom: 1px solid #334155;
+}
+.row:last-of-type { border-bottom: none; }
+.row .amount { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.row .over { color: #f87171; }
+
+.bar { height: 6px; border-radius: 3px; background: #334155; margin-top: 6px; overflow: hidden; }
+.bar > span { display: block; height: 100%; background: #38bdf8; }
+.bar > span.over { background: #f87171; }
+
+.form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+
+/* 16px minimum prevents iOS Safari from zooming on focus */
+input, select, textarea, button {
+  font-size: 16px;
+  font-family: inherit;
+  padding: 12px;
+  border-radius: 12px;
+  border: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+input, select { background: #0f172a; color: #e2e8f0; width: 100%; }
+
+button.primary { background: #38bdf8; color: #0f172a; font-weight: 600; touch-action: manipulation; }
+button.secondary { background: #334155; color: #e2e8f0; touch-action: manipulation; }
+button.danger { background: transparent; color: #f87171; padding: 6px 10px; }
+button:disabled { opacity: .4; }
+
+.muted { color: #94a3b8; font-size: 14px; margin: 6px 0; }
