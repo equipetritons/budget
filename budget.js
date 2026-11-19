@@ -46,13 +46,20 @@ function save() {
 }
 
 // Escape text so it is safe inside HTML.
+// Entities are built from character codes so copy-paste cannot corrupt them.
+var AMP = String.fromCharCode(38);
+
+function entity(code) {
+  return AMP + "#" + code + ";";
+}
+
 function esc(text) {
   var s = String(text);
-  s = s.split("&").join("&");
-  s = s.split("<").join("<");
-  s = s.split(">").join(">");
-  s = s.split(QUOTE_D).join(""");
-  s = s.split(QUOTE_S).join("'");
+  s = s.split(String.fromCharCode(38)).join(entity(38));
+  s = s.split(String.fromCharCode(60)).join(entity(60));
+  s = s.split(String.fromCharCode(62)).join(entity(62));
+  s = s.split(QUOTE_D).join(entity(34));
+  s = s.split(QUOTE_S).join(entity(39));
   return s;
 }
 
