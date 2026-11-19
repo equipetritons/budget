@@ -314,11 +314,15 @@ function viewAdd() {
   html += '<div class="card">';
   if (addType === "expense") {
     html += '<input id="f_amount" class="bigamount" type="text" inputmode="decimal" placeholder="0.00">';
-    if (data.envelopes.length === 0) {
-      html += '<div class="empty">Cree d abord une enveloppe dans Fixes</div>';
+    // Only variable envelopes can receive expenses; fixed charges are automatic.
+    var variableEnvs = data.envelopes.filter(function (e) {
+      return e.kind !== "fixed";
+    });
+    if (variableEnvs.length === 0) {
+      html += '<div class="empty">Cree d abord une enveloppe variable dans Fixes</div>';
     } else {
       html += '<select id="f_env">';
-      data.envelopes.forEach(function (e) {
+      variableEnvs.forEach(function (e) {
         html += '<option value="' + esc(e.id) + '">' + esc(e.name) + "</option>";
       });
       html += "</select>";
