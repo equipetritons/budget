@@ -1,40 +1,19 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0f172a">
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Budget">
-  <meta name="format-detection" content="telephone=no">
-  <title>Budget</title>
-  <link rel="stylesheet" href="style.css?v=8">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Budget">
+<meta name="theme-color" content="#0f172a">
+<title>Budget</title>
+<link rel="stylesheet" href="style.css?v=20">
 </head>
 <body>
-  <div id="root">Chargement…</div>
-
-  <script>
-    // Show any JavaScript error on screen instead of staying stuck on "Chargement"
-    window.onerror = function (message, source, line) {
-      var box = document.getElementById("root");
-      if (box) {
-        box.innerHTML = '<div style="padding:24px;color:#f87171;font-family:sans-serif">' +
-          '<b>Erreur :</b><br>' + message + '<br>ligne ' + line + '</div>';
-      }
-    };
-  </script>
-  <script src="budget.js?v=8"></script>
-  <script>
-    // If the script file never loaded, tell the user clearly
-    if (!window.__budgetLoaded) {
-      var r = document.getElementById("root");
-      if (r && r.textContent.indexOf("Chargement") === 0) {
-        r.innerHTML = '<div style="padding:24px;color:#fbbf24;font-family:sans-serif">' +
-          '<b>budget.js introuvable.</b><br>Vérifie qu\'il existe sur GitHub, au même niveau que index.html.</div>';
-      }
-    }
-  </script>
+<div id="root"></div>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="budget.js?v=20"></script>
 </body>
 </html>
