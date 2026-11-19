@@ -6,6 +6,7 @@ window.__budgetLoaded = true;
 
 var STORAGE_KEY = "budget_v5";
 var PIN_CODE = "1997";
+var EXPORT_KEY = "budget_last_export";
 
 /* =====================================================================
    DATA PROTECTION (must run before the data is loaded)
@@ -14,12 +15,11 @@ var PIN_CODE = "1997";
 // One-time recovery: look for older storage keys and migrate their data.
 (function recoverOldData() {
   try {
-    if (localStorage.getItem(STORAGE_KEY)) { return; } // current data exists
+    if (localStorage.getItem(STORAGE_KEY)) { return; }
     var best = null;
     for (var i = 0; i < localStorage.length; i++) {
       var k = localStorage.key(i);
-      if (k && k.toLowerCase().indexOf("budget") !== -1 && k !== STORAGE_KEY &&
-          k !== "budget_last_export") {
+      if (k && k.toLowerCase().indexOf("budget") !== -1 && k !== STORAGE_KEY && k !== EXPORT_KEY) {
         var raw = localStorage.getItem(k);
         // Keep the largest candidate: it most likely holds the most data.
         if (raw && (!best || raw.length > best.length)) { best = raw; }
@@ -41,35 +41,31 @@ var BACKUP_STORE = "snapshots";
 function openBackupDb(callback) {
   try {
     var req = indexedDB.open(BACKUP_DB, 1);
-    req.onupgradeneeded = function () {
-      req.result.createObjectStore(BACKUP_STORE);
-    };
+    req.onupgradeneeded = function () { req.result.createObjectStore(BACKUP_STORE); };
     req.onsuccess = function () { callback(req.result); };
     req.onerror = function () { callback(null); };
-  } catch (err) {
-    callback(null);
-  }
+  } catch (e) { callback(null); }
 }
 
 function writeBackup(jsonText) {
   openBackupDb(function (db) {
     if (!db) { return; }
-    var tx = db.transaction(BACKUP_STORE, "readwrite");
-    if (jsonText === null) {
-      tx.objectStore(BACKUP_STORE).delete("latest");
-    } else {
+    try {
+      var tx = db.transaction(BACKUP_STORE, "readwrite");
       tx.objectStore(BACKUP_STORE).put(jsonText, "latest");
-    }
+    } catch (e) {}
   });
 }
 
 function readBackup(callback) {
   openBackupDb(function (db) {
     if (!db) { return callback(null); }
-    var tx = db.transaction(BACKUP_STORE, "readonly");
-    var req = tx.objectStore(BACKUP_STORE).get("latest");
-    req.onsuccess = function () { callback(req.result || null); };
-    req.onerror = function () { callback(null); };
+    try {
+      var tx = db.transaction(BACKUP_STORE, "readonly");
+      var req = tx.objectStore(BACKUP_STORE).get("latest");
+      req.onsuccess = function () { callback(req.result || null); };
+      req.onerror = function () { callback(null); };
+    } catch (e) { callback(null); }
   });
 }
 
@@ -79,13 +75,9 @@ var memoryFallback = null;
 function readStorage() {
   try {
     var raw = window.localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      return JSON.parse(raw);
-    }
+    if (raw) { return JSON.parse(raw); }
   } catch (e) {
-    if (memoryFallback) {
-      return memoryFallback;
-    }
+    if (memoryFallback) { return memoryFallback; }
   }
   return null;
 }
@@ -108,13 +100,17 @@ function writeStorage(obj) {
    oneoffs:   { id, name, amount, date }  one-time income (refund, etc.)
 */
 var data = readStorage() || {};
-if (!data.envelopes) { data.envelopes = []; }
-if (!data.expenses) { data.expenses = []; }
-if (!data.incomes) { data.incomes = []; }
-if (!data.oneoffs) { data.oneoffs = []; }
-data.envelopes.forEach(function (e) {
-  if (!e.kind) { e.kind = "variable"; }
-});
+normalizeData();
+
+function normalizeData() {
+  if (!data.envelopes) { data.envelopes = []; }
+  if (!data.expenses) { data.expenses = []; }
+  if (!data.incomes) { data.incomes = []; }
+  if (!data.oneoffs) { data.oneoffs = []; }
+  data.envelopes.forEach(function (e) {
+    if (!e.kind) { e.kind = "variable"; }
+  });
+}
 
 function save() {
   writeStorage(data);
@@ -127,6 +123,8 @@ var currentTab = "home";
 var viewMonth = monthKey(new Date());
 var addType = "expense";
 var scanStatus = "";
+// editing = { type: "env"|"income"|"exp"|"oneoff", id: "..." } or null
+var editing = null;
 
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -182,11 +180,13 @@ function esc(text) {
   return s;
 }
 
-/* ---------- Export / Import ---------- */
+function findById(list, id) {
+  return list.filter(function (x) { return x.id === id; })[0];
+}
 
-// Download all data as a .json file (save it to Files / iCloud Drive).
+/* ---------- Export / Import ---------- */
 function exportData() {
-  var text = JSON.stringify(data);
+  var text = JSON.stringify(data, null, 2);
   var blob = new Blob([text], { type: "application/json" });
   var url = URL.createObjectURL(blob);
   var a = document.createElement("a");
@@ -195,38 +195,38 @@ function exportData() {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-  try { localStorage.setItem("budget_last_export", String(Date.now())); } catch (e) {}
-  renderApp();
+  setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+  try { localStorage.setItem(EXPORT_KEY, todayStr()); } catch (e) {}
 }
 
-// Restore data from a previously exported .json file.
 function importData(file) {
   var reader = new FileReader();
   reader.onload = function () {
     try {
-      var parsed = JSON.parse(reader.result);
-      if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.envelopes)) {
-        throw new Error("bad file");
+      var parsed = JSON.parse(String(reader.result));
+      if (!parsed || !Array.isArray(parsed.envelopes) || !Array.isArray(parsed.expenses)) {
+        window.alert("Fichier invalide.");
+        return;
       }
       if (!window.confirm("Remplacer toutes les donnees actuelles par ce fichier ?")) { return; }
-      var text = JSON.stringify(parsed);
-      localStorage.setItem(STORAGE_KEY, text);
-      writeBackup(text);
-      // Short delay so the backup write can finish before the reload.
-      setTimeout(function () { location.reload(); }, 300);
-    } catch (err) {
-      window.alert("Fichier invalide, rien n a ete modifie.");
+      data = parsed;
+      normalizeData();
+      save();
+      renderApp();
+    } catch (e) {
+      window.alert("Impossible de lire ce fichier.");
     }
   };
   reader.readAsText(file);
 }
 
-// True if the last export is older than 7 days (or never done).
-function backupIsOld() {
-  var last = 0;
-  try { last = Number(localStorage.getItem("budget_last_export") || 0); } catch (e) {}
-  return Date.now() - last > 7 * 24 * 3600 * 1000;
+function daysSinceExport() {
+  try {
+    var last = localStorage.getItem(EXPORT_KEY);
+    if (!last) { return null; }
+    var diff = Date.now() - new Date(last + "T00:00:00").getTime();
+    return Math.floor(diff / 86400000);
+  } catch (e) { return null; }
 }
 
 /* ---------- Calculations ---------- */
@@ -343,7 +343,8 @@ function monthBar() {
 
 function renderApp() {
   var body = "";
-  if (currentTab === "home") { body = viewHome(); }
+  if (editing) { body = viewEdit(); }
+  else if (currentTab === "home") { body = viewHome(); }
   else if (currentTab === "envelopes") { body = viewEnvelopes(); }
   else if (currentTab === "add") { body = viewAdd(); }
   else if (currentTab === "history") { body = viewHistory(); }
@@ -381,6 +382,8 @@ function viewHome() {
   html += '<div class="card"><h2>Enveloppes</h2>';
   if (variable.length === 0) {
     html += '<div class="empty">Aucune enveloppe. Va dans Fixes pour en creer.</div>';
+  } else {
+    html += '<div class="muted" style="margin-bottom:6px">Touche une enveloppe pour la modifier</div>';
   }
   variable.forEach(function (s) {
     html += envelopeRow(s);
@@ -389,12 +392,13 @@ function viewHome() {
   return html;
 }
 
+// The whole envelope block is clickable (data-action="edit-env").
 function envelopeRow(s) {
   var left = s.budget - s.spent;
   var over = left < 0;
   var p = s.budget > 0 ? Math.min(100, (s.spent / s.budget) * 100) : (s.spent > 0 ? 100 : 0);
   var color = over ? "var(--red)" : (p > 85 ? "var(--orange)" : "var(--green)");
-  return '<div class="envelope"><div class="envhead">' +
+  return '<div class="envelope" data-action="edit-env" data-id="' + esc(s.env.id) + '"><div class="envhead">' +
     "<div><b>" + esc(s.env.name) + "</b>" + (over ? '<span class="badge over">depasse</span>' : "") + "</div>" +
     '<div class="' + (over ? "neg" : "") + '"><b>' + money(left) + "</b></div></div>" +
     '<div class="muted">' + money(s.spent) + " / " + money(s.budget) + "</div>" +
@@ -414,7 +418,7 @@ function viewEnvelopes() {
   var fixed = m.envStats.filter(function (s) { return s.env.kind === "fixed"; });
   if (fixed.length === 0) { html += '<div class="empty">Aucune charge fixe</div>'; }
   fixed.forEach(function (s) {
-    html += '<div class="row"><span class="name">' + esc(s.env.name) +
+    html += '<div class="row" data-action="edit-env" data-id="' + esc(s.env.id) + '"><span class="name">' + esc(s.env.name) +
       '</span><span class="amt">' + money(s.budget) + "</span></div>";
   });
   html += "</div>";
@@ -465,7 +469,7 @@ function viewHistory() {
   var items = [];
   data.expenses.forEach(function (x) {
     if (x.date.slice(0, 7) === viewMonth) {
-      var env = data.envelopes.filter(function (e) { return e.id === x.envelopeId; })[0];
+      var env = findById(data.envelopes, x.envelopeId);
       items.push({ id: x.id, type: "exp", date: x.date, title: env ? env.name : "?", note: x.note, amount: x.amount });
     }
   });
@@ -477,13 +481,17 @@ function viewHistory() {
   items.sort(function (a, b) { return a.date < b.date ? 1 : -1; });
 
   html += '<div class="card">';
-  if (items.length === 0) { html += '<div class="empty">Rien ce mois-ci</div>'; }
+  if (items.length === 0) {
+    html += '<div class="empty">Rien ce mois-ci</div>';
+  } else {
+    html += '<div class="muted" style="margin-bottom:6px">Touche une ligne pour la modifier</div>';
+  }
   items.forEach(function (it) {
-    html += '<div class="row"><div><div class="name">' + esc(it.title) + "</div>" +
+    var editAction = it.type === "inc" ? "edit-oneoff" : "edit-exp";
+    html += '<div class="row" data-action="' + editAction + '" data-id="' + esc(it.id) + '"><div><div class="name">' + esc(it.title) + "</div>" +
       '<div class="muted">' + esc(it.date) + (it.note ? " - " + esc(it.note) : "") + "</div></div>" +
       "<div style=\"text-align:right\"><div class=\"amt " + (it.type === "inc" ? "pos" : "") + '">' +
-      (it.type === "inc" ? "+" : "-") + money(it.amount) + "</div>" +
-      '<button class="btn ghost small" data-action="del-' + it.type + '" data-id="' + esc(it.id) + '">Suppr.</button></div></div>';
+      (it.type === "inc" ? "+" : "-") + money(it.amount) + "</div></div></div>";
   });
   html += "</div>";
   return html;
@@ -492,12 +500,19 @@ function viewHistory() {
 function viewSettings() {
   var html = "<h1>Fixes</h1>";
 
+  var days = daysSinceExport();
+  if (days === null || days >= 7) {
+    html += '<div class="card"><b>Sauvegarde conseillee</b><div class="muted">' +
+      (days === null ? "Aucune sauvegarde faite." : "Derniere sauvegarde il y a " + days + " jours.") +
+      '</div><button class="btn green" data-action="export">Exporter mes donnees</button></div>';
+  }
+
   html += '<div class="card"><h2>Rentrees fixes (chaque mois)</h2>';
   if (data.incomes.length === 0) { html += '<div class="empty">Aucune (ex: salaire)</div>'; }
+  else { html += '<div class="muted" style="margin-bottom:6px">Touche une ligne pour la modifier</div>'; }
   data.incomes.forEach(function (i) {
-    html += '<div class="row"><span class="name">' + esc(i.name) + '</span><span><span class="amt pos">' +
-      money(i.amount) + '</span> <button class="btn ghost small" data-action="del-income-fixed" data-id="' +
-      esc(i.id) + '">X</button></span></div>';
+    html += '<div class="row" data-action="edit-income" data-id="' + esc(i.id) + '"><span class="name">' + esc(i.name) +
+      '</span><span class="amt pos">' + money(i.amount) + "</span></div>";
   });
   html += '<input id="s_inc_name" type="text" placeholder="Nom (Salaire)">' +
     '<input id="s_inc_amt" type="text" inputmode="decimal" placeholder="Montant">' +
@@ -505,11 +520,11 @@ function viewSettings() {
 
   html += '<div class="card"><h2>Enveloppes et charges</h2>';
   if (data.envelopes.length === 0) { html += '<div class="empty">Aucune enveloppe</div>'; }
+  else { html += '<div class="muted" style="margin-bottom:6px">Touche une ligne pour la modifier</div>'; }
   data.envelopes.forEach(function (e) {
-    html += '<div class="row"><div><div class="name">' + esc(e.name) + "</div>" +
+    html += '<div class="row" data-action="edit-env" data-id="' + esc(e.id) + '"><div><div class="name">' + esc(e.name) + "</div>" +
       '<div class="muted">' + (e.kind === "fixed" ? "Charge fixe" : "Variable") + "</div></div>" +
-      '<span><span class="amt">' + money(e.amount) +
-      '</span> <button class="btn ghost small" data-action="del-env" data-id="' + esc(e.id) + '">X</button></span></div>';
+      '<span class="amt">' + money(e.amount) + "</span></div>";
   });
   html += '<input id="s_env_name" type="text" placeholder="Nom (Loyer, Courses...)">' +
     '<input id="s_env_amt" type="text" inputmode="decimal" placeholder="Montant par mois">' +
@@ -517,22 +532,122 @@ function viewSettings() {
     '<option value="fixed">Charge fixe (loyer, assurance...)</option></select>' +
     '<button class="btn" data-action="add-env">Ajouter l enveloppe</button></div>';
 
-  html += '<div class="card"><h2>Sauvegarde</h2>';
-  if (backupIsOld()) {
-    html += '<div class="empty">Pense a sauvegarder tes donnees (aucune sauvegarde recente)</div>';
-  }
-  html += '<button class="btn" data-action="export">Exporter mes donnees</button>';
-  html += '<div style="height:10px"></div>';
-  html += '<label class="btn ghost" style="display:block;text-align:center">Importer une sauvegarde' +
-    '<input id="f_import" type="file" accept=".json,application/json" style="display:none"></label>';
-  html += "</div>";
-
   html += '<div class="card"><h2>Donnees</h2>' +
+    '<button class="btn green" data-action="export">Exporter mes donnees</button>' +
+    '<div style="height:10px"></div>' +
+    '<label class="btn ghost" style="display:block;text-align:center">Importer une sauvegarde' +
+    '<input id="f_import" type="file" accept="application/json,.json" style="display:none"></label>' +
+    '<div style="height:10px"></div>' +
     '<button class="btn red" data-action="reset">Tout effacer</button></div>';
   return html;
 }
 
-/* ---------- Receipt scan (Tesseract OCR) ---------- */
+/* ---------- Edit screen (envelope, fixed income, expense, one-off) ---------- */
+function viewEdit() {
+  var html = "";
+  var item;
+
+  if (editing.type === "env") {
+    item = findById(data.envelopes, editing.id);
+    if (!item) { editing = null; return viewHome(); }
+    html += "<h1>Modifier l enveloppe</h1>" + '<div class="card">' +
+      '<div class="muted">Nom</div><input id="e_name" type="text" value="' + esc(item.name) + '">' +
+      '<div class="muted">Montant par mois (CHF)</div>' +
+      '<input id="e_amount" class="bigamount" type="text" inputmode="decimal" value="' + esc(item.amount) + '">' +
+      '<div class="muted">Type</div><select id="e_kind">' +
+      '<option value="variable"' + (item.kind === "variable" ? " selected" : "") + '>Variable (courses, loisirs...)</option>' +
+      '<option value="fixed"' + (item.kind === "fixed" ? " selected" : "") + '>Charge fixe (loyer, assurance...)</option></select>' +
+      '<button class="btn green" data-action="save-edit">Enregistrer</button>' +
+      '<div style="height:10px"></div>' +
+      '<button class="btn ghost" data-action="cancel-edit">Annuler</button>' +
+      '<div style="height:10px"></div>' +
+      '<button class="btn red" data-action="del-env" data-id="' + esc(item.id) + '">Supprimer cette enveloppe</button></div>';
+  } else if (editing.type === "income") {
+    item = findById(data.incomes, editing.id);
+    if (!item) { editing = null; return viewHome(); }
+    html += "<h1>Modifier la rentree fixe</h1>" + '<div class="card">' +
+      '<div class="muted">Nom</div><input id="e_name" type="text" value="' + esc(item.name) + '">' +
+      '<div class="muted">Montant par mois (CHF)</div>' +
+      '<input id="e_amount" class="bigamount" type="text" inputmode="decimal" value="' + esc(item.amount) + '">' +
+      '<button class="btn green" data-action="save-edit">Enregistrer</button>' +
+      '<div style="height:10px"></div>' +
+      '<button class="btn ghost" data-action="cancel-edit">Annuler</button>' +
+      '<div style="height:10px"></div>' +
+      '<button class="btn red" data-action="del-income-fixed" data-id="' + esc(item.id) + '">Supprimer</button></div>';
+  } else if (editing.type === "exp") {
+    item = findById(data.expenses, editing.id);
+    if (!item) { editing = null; return viewHome(); }
+    html += "<h1>Modifier la depense</h1>" + '<div class="card">' +
+      '<div class="muted">Montant (CHF)</div>' +
+      '<input id="e_amount" class="bigamount" type="text" inputmode="decimal" value="' + esc(item.amount) + '">' +
+      '<div class="muted">Enveloppe</div><select id="e_env">';
+    data.envelopes.forEach(function (e) {
+      html += '<option value="' + esc(e.id) + '"' + (e.id === item.envelopeId ? " selected" : "") + ">" + esc(e.name) + "</option>";
+    });
+    html += "</select>" +
+      '<div class="muted">Note</div><input id="e_note" type="text" value="' + esc(item.note || "") + '">' +
+      '<div class="muted">Date</div><input id="e_date" type="date" value="' + esc(item.date) + '">' +
+      '<button class="btn green" data-action="save-edit">Enregistrer</button>' +
+      '<div style="height:10px"></div>' +
+      '<button class="btn ghost" data-action="cancel-edit">Annuler</button>' +
+      '<div style="height:10px"></div>' +
+      '<button class="btn red" data-action="del-exp" data-id="' + esc(item.id) + '">Supprimer cette depense</button></div>';
+  } else if (editing.type === "oneoff") {
+    item = findById(data.oneoffs, editing.id);
+    if (!item) { editing = null; return viewHome(); }
+    html += "<h1>Modifier la rentree</h1>" + '<div class="card">' +
+      '<div class="muted">Nom</div><input id="e_name" type="text" value="' + esc(item.name) + '">' +
+      '<div class="muted">Montant (CHF)</div>' +
+      '<input id="e_amount" class="bigamount" type="text" inputmode="decimal" value="' + esc(item.amount) + '">' +
+      '<div class="muted">Date</div><input id="e_date" type="date" value="' + esc(item.date) + '">' +
+      '<button class="btn green" data-action="save-edit">Enregistrer</button>' +
+      '<div style="height:10px"></div>' +
+      '<button class="btn ghost" data-action="cancel-edit">Annuler</button>' +
+      '<div style="height:10px"></div>' +
+      '<button class="btn red" data-action="del-inc" data-id="' + esc(item.id) + '">Supprimer cette rentree</button></div>';
+  }
+  return html;
+}
+
+function saveEdit() {
+  var item;
+  if (editing.type === "env") {
+    item = findById(data.envelopes, editing.id);
+    var name = val("e_name").trim();
+    var amount = toNumber(val("e_amount"));
+    if (!name || amount < 0) { window.alert("Nom et montant valides requis."); return false; }
+    item.name = name;
+    item.amount = amount;
+    item.kind = val("e_kind") === "fixed" ? "fixed" : "variable";
+  } else if (editing.type === "income") {
+    item = findById(data.incomes, editing.id);
+    var n2 = val("e_name").trim();
+    var a2 = toNumber(val("e_amount"));
+    if (!n2 || a2 <= 0) { window.alert("Nom et montant valides requis."); return false; }
+    item.name = n2;
+    item.amount = a2;
+  } else if (editing.type === "exp") {
+    item = findById(data.expenses, editing.id);
+    var a3 = toNumber(val("e_amount"));
+    if (a3 <= 0) { window.alert("Montant requis."); return false; }
+    item.amount = a3;
+    item.envelopeId = val("e_env") || item.envelopeId;
+    item.note = val("e_note");
+    item.date = val("e_date") || item.date;
+  } else if (editing.type === "oneoff") {
+    item = findById(data.oneoffs, editing.id);
+    var a4 = toNumber(val("e_amount"));
+    if (a4 <= 0) { window.alert("Montant requis."); return false; }
+    item.name = val("e_name").trim() || item.name;
+    item.amount = a4;
+    item.date = val("e_date") || item.date;
+  }
+  save();
+  return true;
+}
+
+/* ---------- Receipt scan (Tesseract OCR) ----------
+   The photo is only read in memory. It is never saved anywhere. */
 function extractAmount(text) {
   var lines = text.split("\n");
   var best = null;
@@ -568,30 +683,25 @@ function setScanStatus(msg) {
 }
 
 function scanReceipt(file, fileInput) {
-  // Free the image from memory: it is never saved anywhere.
-  function releaseImage() {
-    try { fileInput.value = ""; } catch (e) {}
-  }
-
   if (typeof Tesseract === "undefined") {
     setScanStatus("Scan indisponible (connexion requise la premiere fois).");
-    releaseImage();
     return;
   }
   setScanStatus("Lecture du ticket... (10 a 20 secondes)");
   Tesseract.recognize(file, "fra+eng").then(function (result) {
-    releaseImage();
     var amount = extractAmount(result.data.text || "");
     if (amount === null) {
       setScanStatus("Montant introuvable. Saisis-le a la main.");
-      return;
+    } else {
+      var input = document.getElementById("f_amount");
+      if (input) { input.value = amount.toFixed(2); }
+      setScanStatus("Montant detecte : " + amount.toFixed(2) + " CHF. Verifie avant d enregistrer.");
     }
-    var input = document.getElementById("f_amount");
-    if (input) { input.value = amount.toFixed(2); }
-    setScanStatus("Montant detecte : " + amount.toFixed(2) + " CHF. Verifie avant d enregistrer.");
+    // Release the photo: nothing about the image is kept.
+    if (fileInput) { fileInput.value = ""; }
   }).catch(function () {
-    releaseImage();
     setScanStatus("Erreur de lecture. Saisis le montant a la main.");
+    if (fileInput) { fileInput.value = ""; }
   });
 }
 
@@ -603,11 +713,9 @@ function val(id) {
 
 root.addEventListener("change", function (ev) {
   var t = ev.target;
-  if (t && t.id === "f_scan" && t.files && t.files[0]) {
-    scanReceipt(t.files[0], t);
-  } else if (t && t.id === "f_import" && t.files && t.files[0]) {
-    importData(t.files[0]);
-  }
+  if (!t || !t.files || !t.files[0]) { return; }
+  if (t.id === "f_scan") { scanReceipt(t.files[0], t); }
+  else if (t.id === "f_import") { importData(t.files[0]); t.value = ""; }
 });
 
 root.addEventListener("click", function (ev) {
@@ -623,7 +731,7 @@ root.addEventListener("click", function (ev) {
   if (key) { pressKey(key); return; }
 
   var tab = target.getAttribute("data-tab");
-  if (tab) { currentTab = tab; scanStatus = ""; renderApp(); return; }
+  if (tab) { currentTab = tab; editing = null; scanStatus = ""; renderApp(); return; }
 
   var at = target.getAttribute("data-addtype");
   if (at) { addType = at; renderApp(); return; }
@@ -633,7 +741,15 @@ root.addEventListener("click", function (ev) {
 
   if (action === "prev") { viewMonth = shiftMonth(viewMonth, -1); renderApp(); }
   else if (action === "next") { viewMonth = shiftMonth(viewMonth, 1); renderApp(); }
-  else if (action === "export") { exportData(); }
+  else if (action === "export") { exportData(); renderApp(); }
+  else if (action === "edit-env") { editing = { type: "env", id: id }; renderApp(); window.scrollTo(0, 0); }
+  else if (action === "edit-income") { editing = { type: "income", id: id }; renderApp(); window.scrollTo(0, 0); }
+  else if (action === "edit-exp") { editing = { type: "exp", id: id }; renderApp(); window.scrollTo(0, 0); }
+  else if (action === "edit-oneoff") { editing = { type: "oneoff", id: id }; renderApp(); window.scrollTo(0, 0); }
+  else if (action === "cancel-edit") { editing = null; renderApp(); }
+  else if (action === "save-edit") {
+    if (saveEdit()) { editing = null; renderApp(); }
+  }
   else if (action === "save-expense") {
     var amt = toNumber(val("f_amount"));
     var envId = val("f_env");
@@ -661,39 +777,45 @@ root.addEventListener("click", function (ev) {
     save(); renderApp();
   }
   else if (action === "del-income-fixed") {
+    if (!window.confirm("Supprimer cette rentree fixe ?")) { return; }
     data.incomes = data.incomes.filter(function (x) { return x.id !== id; });
-    save(); renderApp();
+    editing = null; save(); renderApp();
   }
   else if (action === "del-env") {
     if (!window.confirm("Supprimer cette enveloppe et ses depenses ?")) { return; }
     data.envelopes = data.envelopes.filter(function (x) { return x.id !== id; });
     data.expenses = data.expenses.filter(function (x) { return x.envelopeId !== id; });
-    save(); renderApp();
+    editing = null; save(); renderApp();
   }
   else if (action === "del-exp") {
+    if (!window.confirm("Supprimer cette depense ?")) { return; }
     data.expenses = data.expenses.filter(function (x) { return x.id !== id; });
-    save(); renderApp();
+    editing = null; save(); renderApp();
   }
   else if (action === "del-inc") {
+    if (!window.confirm("Supprimer cette rentree ?")) { return; }
     data.oneoffs = data.oneoffs.filter(function (x) { return x.id !== id; });
-    save(); renderApp();
+    editing = null; save(); renderApp();
   }
   else if (action === "reset") {
-    if (window.confirm("Tout effacer definitivement ?")) {
+    if (window.confirm("Tout effacer definitivement ? Pense a exporter avant.")) {
       data = { envelopes: [], expenses: [], incomes: [], oneoffs: [] };
       save(); renderApp();
     }
   }
 });
 
-/* ---------- Startup ---------- */
-// If main storage is empty but the IndexedDB backup exists, restore it once.
-var restoreFlag = "budget_restore_tried";
-if (!localStorage.getItem(STORAGE_KEY) && !sessionStorage.getItem(restoreFlag)) {
-  sessionStorage.setItem(restoreFlag, "1"); // prevents any reload loop
+/* ---------- Startup ----------
+   If localStorage was wiped but the IndexedDB copy exists, restore it
+   (once only, to avoid reload loops). */
+var hasMainData = false;
+try { hasMainData = !!window.localStorage.getItem(STORAGE_KEY); } catch (e) {}
+
+if (!hasMainData && !sessionStorage.getItem("budget_restored")) {
   readBackup(function (saved) {
     if (saved) {
-      localStorage.setItem(STORAGE_KEY, saved);
+      try { sessionStorage.setItem("budget_restored", "1"); } catch (e) {}
+      try { localStorage.setItem(STORAGE_KEY, saved); } catch (e) {}
       location.reload();
     } else {
       renderLock();
