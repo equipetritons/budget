@@ -7,6 +7,73 @@ window.__budgetLoaded = true;
 var STORAGE_KEY = "budget_v5";
 var PIN_CODE = "1997";
 
+/* =====================================================================
+   DATA PROTECTION (must run before the data is loaded)
+   ===================================================================== */
+
+// One-time recovery: look for older storage keys and migrate their data.
+(function recoverOldData() {
+  try {
+    if (localStorage.getItem(STORAGE_KEY)) { return; } // current data exists
+    var best = null;
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (k && k.toLowerCase().indexOf("budget") !== -1 && k !== STORAGE_KEY &&
+          k !== "budget_last_export") {
+        var raw = localStorage.getItem(k);
+        // Keep the largest candidate: it most likely holds the most data.
+        if (raw && (!best || raw.length > best.length)) { best = raw; }
+      }
+    }
+    if (best) { localStorage.setItem(STORAGE_KEY, best); }
+  } catch (err) {}
+})();
+
+// Ask the browser to keep our data (prevents automatic cleanup).
+if (navigator.storage && navigator.storage.persist) {
+  navigator.storage.persist();
+}
+
+// Second copy of the data in IndexedDB, used if localStorage gets wiped.
+var BACKUP_DB = "budget_backup_db";
+var BACKUP_STORE = "snapshots";
+
+function openBackupDb(callback) {
+  try {
+    var req = indexedDB.open(BACKUP_DB, 1);
+    req.onupgradeneeded = function () {
+      req.result.createObjectStore(BACKUP_STORE);
+    };
+    req.onsuccess = function () { callback(req.result); };
+    req.onerror = function () { callback(null); };
+  } catch (err) {
+    callback(null);
+  }
+}
+
+function writeBackup(jsonText) {
+  openBackupDb(function (db) {
+    if (!db) { return; }
+    var tx = db.transaction(BACKUP_STORE, "readwrite");
+    if (jsonText === null) {
+      tx.objectStore(BACKUP_STORE).delete("latest");
+    } else {
+      tx.objectStore(BACKUP_STORE).put(jsonText, "latest");
+    }
+  });
+}
+
+function readBackup(callback) {
+  openBackupDb(function (db) {
+    if (!db) { return callback(null); }
+    var tx = db.transaction(BACKUP_STORE, "readonly");
+    var req = tx.objectStore(BACKUP_STORE).get("latest");
+    req.onsuccess = function () { callback(req.result || null); };
+    req.onerror = function () { callback(null); };
+  });
+}
+
+/* ---------- Storage ---------- */
 var memoryFallback = null;
 
 function readStorage() {
@@ -25,11 +92,13 @@ function readStorage() {
 
 function writeStorage(obj) {
   memoryFallback = obj;
+  var text = JSON.stringify(obj);
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+    window.localStorage.setItem(STORAGE_KEY, text);
   } catch (e) {
     // Private mode: data lives only until the page is closed.
   }
+  writeBackup(text);
 }
 
 /* ---------- Data model ----------
@@ -111,6 +180,53 @@ function esc(text) {
   s = s.split(String.fromCharCode(34)).join(entity(34));
   s = s.split(String.fromCharCode(39)).join(entity(39));
   return s;
+}
+
+/* ---------- Export / Import ---------- */
+
+// Download all data as a .json file (save it to Files / iCloud Drive).
+function exportData() {
+  var text = JSON.stringify(data);
+  var blob = new Blob([text], { type: "application/json" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = "budget-sauvegarde-" + todayStr() + ".json";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  try { localStorage.setItem("budget_last_export", String(Date.now())); } catch (e) {}
+  renderApp();
+}
+
+// Restore data from a previously exported .json file.
+function importData(file) {
+  var reader = new FileReader();
+  reader.onload = function () {
+    try {
+      var parsed = JSON.parse(reader.result);
+      if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.envelopes)) {
+        throw new Error("bad file");
+      }
+      if (!window.confirm("Remplacer toutes les donnees actuelles par ce fichier ?")) { return; }
+      var text = JSON.stringify(parsed);
+      localStorage.setItem(STORAGE_KEY, text);
+      writeBackup(text);
+      // Short delay so the backup write can finish before the reload.
+      setTimeout(function () { location.reload(); }, 300);
+    } catch (err) {
+      window.alert("Fichier invalide, rien n a ete modifie.");
+    }
+  };
+  reader.readAsText(file);
+}
+
+// True if the last export is older than 7 days (or never done).
+function backupIsOld() {
+  var last = 0;
+  try { last = Number(localStorage.getItem("budget_last_export") || 0); } catch (e) {}
+  return Date.now() - last > 7 * 24 * 3600 * 1000;
 }
 
 /* ---------- Calculations ---------- */
@@ -401,6 +517,16 @@ function viewSettings() {
     '<option value="fixed">Charge fixe (loyer, assurance...)</option></select>' +
     '<button class="btn" data-action="add-env">Ajouter l enveloppe</button></div>';
 
+  html += '<div class="card"><h2>Sauvegarde</h2>';
+  if (backupIsOld()) {
+    html += '<div class="empty">Pense a sauvegarder tes donnees (aucune sauvegarde recente)</div>';
+  }
+  html += '<button class="btn" data-action="export">Exporter mes donnees</button>';
+  html += '<div style="height:10px"></div>';
+  html += '<label class="btn ghost" style="display:block;text-align:center">Importer une sauvegarde' +
+    '<input id="f_import" type="file" accept=".json,application/json" style="display:none"></label>';
+  html += "</div>";
+
   html += '<div class="card"><h2>Donnees</h2>' +
     '<button class="btn red" data-action="reset">Tout effacer</button></div>';
   return html;
@@ -441,13 +567,20 @@ function setScanStatus(msg) {
   if (el) { el.textContent = msg; }
 }
 
-function scanReceipt(file) {
+function scanReceipt(file, fileInput) {
+  // Free the image from memory: it is never saved anywhere.
+  function releaseImage() {
+    try { fileInput.value = ""; } catch (e) {}
+  }
+
   if (typeof Tesseract === "undefined") {
     setScanStatus("Scan indisponible (connexion requise la premiere fois).");
+    releaseImage();
     return;
   }
   setScanStatus("Lecture du ticket... (10 a 20 secondes)");
   Tesseract.recognize(file, "fra+eng").then(function (result) {
+    releaseImage();
     var amount = extractAmount(result.data.text || "");
     if (amount === null) {
       setScanStatus("Montant introuvable. Saisis-le a la main.");
@@ -457,6 +590,7 @@ function scanReceipt(file) {
     if (input) { input.value = amount.toFixed(2); }
     setScanStatus("Montant detecte : " + amount.toFixed(2) + " CHF. Verifie avant d enregistrer.");
   }).catch(function () {
+    releaseImage();
     setScanStatus("Erreur de lecture. Saisis le montant a la main.");
   });
 }
@@ -468,8 +602,11 @@ function val(id) {
 }
 
 root.addEventListener("change", function (ev) {
-  if (ev.target && ev.target.id === "f_scan" && ev.target.files && ev.target.files[0]) {
-    scanReceipt(ev.target.files[0]);
+  var t = ev.target;
+  if (t && t.id === "f_scan" && t.files && t.files[0]) {
+    scanReceipt(t.files[0], t);
+  } else if (t && t.id === "f_import" && t.files && t.files[0]) {
+    importData(t.files[0]);
   }
 });
 
@@ -496,6 +633,7 @@ root.addEventListener("click", function (ev) {
 
   if (action === "prev") { viewMonth = shiftMonth(viewMonth, -1); renderApp(); }
   else if (action === "next") { viewMonth = shiftMonth(viewMonth, 1); renderApp(); }
+  else if (action === "export") { exportData(); }
   else if (action === "save-expense") {
     var amt = toNumber(val("f_amount"));
     var envId = val("f_env");
@@ -548,4 +686,19 @@ root.addEventListener("click", function (ev) {
   }
 });
 
-renderLock();
+/* ---------- Startup ---------- */
+// If main storage is empty but the IndexedDB backup exists, restore it once.
+var restoreFlag = "budget_restore_tried";
+if (!localStorage.getItem(STORAGE_KEY) && !sessionStorage.getItem(restoreFlag)) {
+  sessionStorage.setItem(restoreFlag, "1"); // prevents any reload loop
+  readBackup(function (saved) {
+    if (saved) {
+      localStorage.setItem(STORAGE_KEY, saved);
+      location.reload();
+    } else {
+      renderLock();
+    }
+  });
+} else {
+  renderLock();
+}
